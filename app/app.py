@@ -1,8 +1,15 @@
 import pandas as pd
 import streamlit as st
 import joblib
+from streamlit_gsheets import GSheetsConnection
 
 st.title("Heart Disease Predictor")
+
+if 'pred_result' not in st.session_state:
+    st.session_state["pred_result"] = None
+if 'pred_input' not in st.session_state:
+    st.session_state["pred_input"] = None
+
 tab1, tab2, tab3 = st.tabs(["Predict", "Bulk Predict", "Model information"])
 
 # === Tab1 ===
@@ -57,11 +64,13 @@ with tab1:
         
         return predictions
     
-    if st.button('Submit'):
+    if st.button('Elaborate'):
         st.subheader('Results...')
         st.markdown('===========================')
 
         result = predict_heart_disease(input_data)
+        st.session_state['pred_result'] = result
+        st.session_state['pred_input'] = input_data.copy()
 
         for i in range(len(result)):
             st.subheader(algonames[i])
@@ -165,3 +174,35 @@ with tab3:
     df = pd.DataFrame(list(zip(models, accuracies)), columns=['Models', 'Accuracies %'])
     fig = px.bar(df, y='Accuracies %', x = 'Models')
     st.plotly_chart(fig)
+
+# === Estabilishing a Google Sheets connection
+conn = st.connection("gsheets", type=GSheetsConnection)
+
+# === Fetch existing vendors data ===
+existing_data = conn.read(ttl=5).dropna(how='all')
+
+# === Submit Button ===
+if st.button('Submit Your Data'):
+    if st.session_state["pred_result"] is None or st.session_state["pred_input"] is None:
+        st.warning('Prima clicca **Elaborate** per generare la predizione.')
+    else:
+        res = st.session_state["pred_result"]   # lista di array: [array([0]), ...]
+        row = st.session_state["pred_input"].copy()  # DataFrame 1 riga con le 11 feature
+
+        # aggiungi le predizioni come colonne
+        row["HeartDiseaseDT"]  = [int(res[0][0])]
+        row["HeartDiseaseLR"]  = [int(res[1][0])]
+        row["HeartDiseaseRF"]  = [int(res[2][0])]
+        row["HeartDiseaseSVM"] = [int(res[3][0])]
+        row["HeartDiseaseXGB"] = [int(res[4][0])]
+
+        # leggi lo sheet (senza cache) e appendi
+        try:
+            existing_data = conn.read(ttl=0).dropna(how='all')
+        except Exception:
+            existing_data = pd.DataFrame()
+
+        updated_df = pd.concat([existing_data, row], ignore_index=True)
+        conn.update(data=updated_df)
+
+        st.success('Your results have been submitted ✅')
